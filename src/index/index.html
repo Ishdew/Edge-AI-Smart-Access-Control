@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+	<link type="text/css" rel="stylesheet" href="https://unpkg.com/bootstrap@4.6.2/dist/css/bootstrap.css" />
+	<link type="text/css" rel="stylesheet" href="https://unpkg.com/bootstrap-vue@2.23.1/dist/bootstrap-vue.css" />
+	<script src="https://unpkg.com/@babel/polyfill@7.12.1/dist/polyfill.js"></script>
+	<script src="https://unpkg.com/vue@2.6.14/dist/vue.js"></script>
+	<script src="https://unpkg.com/bootstrap-vue@2.23.1/dist/bootstrap-vue.js"></script>
+	<script src="https://unpkg.com/axios@1.6.0/dist/axios.js"></script>
+	<style>
+		body {
+			background-color: #f4f6f9;
+			padding-top: 20px;
+		}
+
+		.main {
+			border: 3px solid #dc3545;
+			border-radius: 8px;
+			padding: 10px;
+			background: white;
+		}
+
+		.side {
+			border: 3px solid #007bff;
+			border-radius: 8px;
+			padding: 15px;
+			background: white;
+		}
+
+		.personcard {
+			background: #ffffff;
+			border: 1px solid #dee2e6;
+			border-radius: 8px;
+			padding: 15px;
+			margin-bottom: 15px;
+			box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+		}
+
+		.personimage {
+			width: 100%;
+			max-width: 130px;
+			height: 130px;
+			object-fit: cover;
+			border-radius: 8px;
+			border: 2px solid #6c757d;
+		}
+	</style>
+</head>
+
+<body>
+	<div id="app" class="container-fluid px-4">
+		<b-row>
+			<b-col cols="7" class="main text-center shadow-sm">
+				<h3 class="mb-3 font-weight-bold text-danger">Live Access Camera</h3>
+				<b-img src="/mainview" fluid rounded style="max-height: 80vh;"></b-img>
+			</b-col>
+
+			<b-col cols="5" class="side shadow-sm">
+				<h3 class="mb-3 text-center font-weight-bold text-primary">Access Management</h3>
+				<b-button block variant="outline-secondary" class="mb-4" @click="merge()">
+					Merge All Common Names
+				</b-button>
+
+				<div v-if="people.length === 0" class="text-center text-muted mt-5">
+					<h5>Waiting for faces...</h5>
+					<p>Step into the camera frame to register a new user.</p>
+				</div>
+
+				<div v-for="person in people" :key="person.uid" class="personcard">
+					<b-row align-v="center">
+						<b-col cols="4" class="text-center">
+							<b-img :src="'/image/' + person.uid" class="personimage"></b-img>
+						</b-col>
+						<b-col cols="8">
+							<b-form-group class="mb-2">
+								<label class="small text-muted font-weight-bold">Friendly Name:</label>
+								<b-input v-model="person.name" placeholder="Assign a name..." @blur="updateName(person)"
+									size="sm"></b-input>
+							</b-form-group>
+
+							<div class="d-flex justify-content-between align-items-center mt-3">
+								<b-form-checkbox switch v-model="person.allowed" @change="chmod(person)" size="lg">
+									<strong :class="person.allowed ? 'text-success' : 'text-danger'">
+										{{ person.allowed ? 'Access Granted' : 'Access Denied' }}
+									</strong>
+								</b-form-checkbox>
+								<b-button size="sm" variant="danger" @click="send_delete(person.uid)">Delete</b-button>
+							</div>
+							<div class="text-muted small mt-2">Database ID: {{ person.uid }}</div>
+						</b-col>
+					</b-row>
+				</div>
+			</b-col>
+		</b-row>
+	</div>
+
+	<script>
+		window.app = new Vue({
+			el: '#app',
+			data() { return { people: [] } },
+			methods: {
+				chmod(person) {
+					axios.post('/access', { 'uid': person.uid }).then(() => this.populate());
+				},
+				send_delete(uid) {
+					axios.post('/delete', [uid]).then(() => this.populate());
+				},
+				updateName(person) {
+					// Endpoint to save custom friendly names
+					axios.post('/access', { 'uid': person.uid }).then(() => this.populate());
+				},
+				populate() {
+					axios.get('/names').then(response => { this.people = response.data; });
+				}
+			},
+			mounted() {
+				this.populate();
+				// Ping the server every 3 seconds to instantly display new faces!
+				setInterval(this.populate, 3000);
+			}
+		})
+	</script>
+</body>
+
+</html>
