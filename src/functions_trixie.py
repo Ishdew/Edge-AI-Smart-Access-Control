@@ -229,24 +229,43 @@ async def videoProcessing(identifier, imshow=False):
                         
                         # 1. Check head orientation
                         current_pose = get_head_orientation(landmarks)
-                        
+
+
+                        # --- HELPER FUNCTION FOR TOP-CENTERED TEXT ---
+                        def draw_centered_instruction(text, color):
+                            font = cv2.FONT_HERSHEY_SIMPLEX
+                            scale = 0.7
+                            thickness = 2
+                            # Get the width and height of the text box
+                            text_size = cv2.getTextSize(text, font, scale, thickness)[0]
+                            # Calculate the perfect X center: (Frame Width - Text Width) / 2
+                            text_x = (scaled_bgr.shape[1] - text_size[0]) // 2
+                            text_y = 30 # 30 pixels down from the very top of the frame
+                            
+                            # Draw a subtle black outline for better readability against bright backgrounds
+                            cv2.putText(scaled_bgr, text, (text_x, text_y), font, scale, (0, 0, 0), thickness + 2)
+                            # Draw the main colored text
+                            cv2.putText(scaled_bgr, text, (text_x, text_y), font, scale, color, thickness)
+                        # ---------------------------------------------
+
                         # 2. Guide the user through the training stages
                         if identifier.enrollment_stage == "NEED_LEFT":
-                            cv2.putText(scaled_bgr, "TRAINING: TURN HEAD LEFT", (left, top - 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 2)
+                            draw_centered_instruction("TRAINING: TURN HEAD LEFT", (0, 165, 255))
+                            
                             if current_pose == "LOOKING_LEFT":
                                 identifier.enrollment_stage = "NEED_RIGHT"
                                 cv2.putText(scaled_bgr, "GOOD!", (left, bottom + 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
                                 
                         elif identifier.enrollment_stage == "NEED_RIGHT":
-                            cv2.putText(scaled_bgr, "TRAINING: TURN HEAD RIGHT", (left, top - 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 2)
+                            draw_centered_instruction("TRAINING: TURN HEAD RIGHT", (0, 165, 255))
+                            
                             if current_pose == "LOOKING_RIGHT":
                                 identifier.enrollment_stage = "NEED_BLINK"
                                 cv2.putText(scaled_bgr, "GOOD!", (left, bottom + 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
                                 
                         elif identifier.enrollment_stage == "NEED_BLINK":
-                            cv2.putText(scaled_bgr, "TRAINING COMPLETE: PLEASE BLINK", (left, top - 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+                            draw_centered_instruction("TRAINING COMPLETE: PLEASE BLINK", (0, 0, 255))
                             
-                            # Standard Blink Challenge Logic
                             left_eye = landmarks.get('left_eye')
                             right_eye = landmarks.get('right_eye')
                             if left_eye and right_eye:
@@ -258,17 +277,18 @@ async def videoProcessing(identifier, imshow=False):
                                     blink_counter += 1
                                 else:
                                     if blink_counter >= EYE_AR_CONSEC_FRAMES:
-                                        # Success!
                                         person_name = identifier.friendly_names.get(current_session_person, current_session_person)
                                         accessGranted(name=person_name)
                                         
-                                        cv2.putText(scaled_bgr, "UNLOCKED", (left, top - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                                        # Center the unlock success message as well
+                                        draw_centered_instruction(f"UNLOCKED: WELCOME {person_name.upper()}", (0, 255, 0))
+                                        
                                         ret_enc, v = cv2.imencode('.jpg', scaled_bgr)
                                         identifier.setView(v.tobytes())
                                         
                                         await asyncio.sleep(3) 
                                         current_session_person = None 
-                                        identifier.enrollment_stage = "NEED_LEFT" # Reset for next time
+                                        identifier.enrollment_stage = "NEED_LEFT" 
                                         
                                     blink_counter = 0
 
