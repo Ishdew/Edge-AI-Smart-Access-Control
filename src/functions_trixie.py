@@ -76,6 +76,36 @@ def accessDenied(name=None, reason="Unauthorized"):
     print(f"[DOOR] LOCKED - {log_msg}")
     logging.info(log_msg)
 
+def get_head_orientation(landmarks):
+    """Calculates Yaw and Pitch using 2D facial landmark geometry"""
+    
+    # Grab the specific x,y coordinates we need
+    nose_tip = landmarks['nose_tip'][2]
+    jaw_left = landmarks['chin'][0]
+    jaw_right = landmarks['chin'][16]
+    jaw_bottom = landmarks['chin'][8]
+    nose_bridge_top = landmarks['nose_bridge'][0]
+
+    # Calculate horizontal distances (Yaw)
+    dist_nose_to_left_jaw = nose_tip[0] - jaw_left[0]
+    dist_nose_to_right_jaw = jaw_right[0] - nose_tip[0]
+
+    # Calculate vertical distances (Pitch)
+    dist_nose_to_eyes = nose_tip[1] - nose_bridge_top[1]
+    dist_nose_to_chin = jaw_bottom[1] - nose_tip[1]
+
+    # Evaluate ratios to determine orientation
+    if dist_nose_to_left_jaw > dist_nose_to_right_jaw * 1.8:
+        return "LOOKING_RIGHT"
+    elif dist_nose_to_right_jaw > dist_nose_to_left_jaw * 1.8:
+        return "LOOKING_LEFT"
+    elif dist_nose_to_chin > dist_nose_to_eyes * 1.5:
+        return "LOOKING_UP"
+    elif dist_nose_to_chin < dist_nose_to_eyes * 0.8:
+        return "LOOKING_DOWN"
+    else:
+        return "CENTER"
+
 # ---------------------------------------------------------------------------------------
 
 async def videoProcessing(identifier, imshow=False):
@@ -182,47 +212,66 @@ async def videoProcessing(identifier, imshow=False):
                         pass
             
             # -------------------------------------------------------------------
-            # STAGE 2: LIGHTWEIGHT LIVENESS (ResNet Bypassed)
+            # STAGE 2: LIGHTWEIGHT LIVENESS & GUIDED ENROLLMENT
             # -------------------------------------------------------------------
             else:
-                # If they are a known user with access, run the blink challenge
                 if current_session_person != "DENIED_NEW_USER" and identifier.hasAccess(current_session_person):
                     
-                    cv2.putText(scaled_bgr, "AUTHORIZED: PLEASE BLINK", (left, top - 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
-                    
+                    # Ensure we have a tracking variable for their enrollment progress
+                    if not hasattr(identifier, 'enrollment_stage'):
+                        identifier.enrollment_stage = "NEED_LEFT"
+
+                    # Get landmarks for both blink detection and pose estimation
                     face_landmarks_list = fr.face_landmarks(scaled_rgb, [(top, right, bottom, left)])
+                    
                     if face_landmarks_list:
                         landmarks = face_landmarks_list[0]
-                        left_eye = landmarks.get('left_eye')
-                        right_eye = landmarks.get('right_eye')
+                        
+                        # 1. Check head orientation
+                        current_pose = get_head_orientation(landmarks)
+                        
+                        # 2. Guide the user through the training stages
+                        if identifier.enrollment_stage == "NEED_LEFT":
+                            cv2.putText(scaled_bgr, "TRAINING: TURN HEAD LEFT", (left, top - 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 2)
+                            if current_pose == "LOOKING_LEFT":
+                                identifier.enrollment_stage = "NEED_RIGHT"
+                                cv2.putText(scaled_bgr, "GOOD!", (left, bottom + 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+                                
+                        elif identifier.enrollment_stage == "NEED_RIGHT":
+                            cv2.putText(scaled_bgr, "TRAINING: TURN HEAD RIGHT", (left, top - 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 2)
+                            if current_pose == "LOOKING_RIGHT":
+                                identifier.enrollment_stage = "NEED_BLINK"
+                                cv2.putText(scaled_bgr, "GOOD!", (left, bottom + 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+                                
+                        elif identifier.enrollment_stage == "NEED_BLINK":
+                            cv2.putText(scaled_bgr, "TRAINING COMPLETE: PLEASE BLINK", (left, top - 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+                            
+                            # Standard Blink Challenge Logic
+                            left_eye = landmarks.get('left_eye')
+                            right_eye = landmarks.get('right_eye')
+                            if left_eye and right_eye:
+                                leftEAR = calculate_ear(left_eye)
+                                rightEAR = calculate_ear(right_eye)
+                                ear = (leftEAR + rightEAR) / 2.0
 
-                        if left_eye and right_eye:
-                            for point in left_eye + right_eye:
-                                cv2.circle(scaled_bgr, point, 2, (0, 255, 255), -1)
+                                if ear < EYE_AR_THRESH:
+                                    blink_counter += 1
+                                else:
+                                    if blink_counter >= EYE_AR_CONSEC_FRAMES:
+                                        # Success!
+                                        person_name = identifier.friendly_names.get(current_session_person, current_session_person)
+                                        accessGranted(name=person_name)
+                                        
+                                        cv2.putText(scaled_bgr, "UNLOCKED", (left, top - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                                        ret_enc, v = cv2.imencode('.jpg', scaled_bgr)
+                                        identifier.setView(v.tobytes())
+                                        
+                                        await asyncio.sleep(3) 
+                                        current_session_person = None 
+                                        identifier.enrollment_stage = "NEED_LEFT" # Reset for next time
+                                        
+                                    blink_counter = 0
 
-                            leftEAR = calculate_ear(left_eye)
-                            rightEAR = calculate_ear(right_eye)
-                            ear = (leftEAR + rightEAR) / 2.0
-
-                            cv2.putText(scaled_bgr, f"Live EAR: {ear:.2f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
-
-                            if ear < EYE_AR_THRESH:
-                                blink_counter += 1
-                                cv2.putText(scaled_bgr, "BLINKING...", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
-                            else:
-                                if blink_counter >= EYE_AR_CONSEC_FRAMES:
-                                    # Liveness passed! 
-                                    person_name = identifier.friendly_names.get(current_session_person, current_session_person)
-                                    accessGranted(name=person_name)
-                                    
-                                    cv2.putText(scaled_bgr, "UNLOCKED", (left, top - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-                                    ret_enc, v = cv2.imencode('.jpg', scaled_bgr)
-                                    identifier.setView(v.tobytes())
-                                    
-                                    await asyncio.sleep(3) # Hold door open
-                                    current_session_person = None # Reset for next person
-                                    
-                                blink_counter = 0
                 else:
                     cv2.putText(scaled_bgr, "ACCESS DENIED", (left, top - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
