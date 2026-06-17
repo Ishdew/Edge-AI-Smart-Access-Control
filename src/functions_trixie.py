@@ -156,12 +156,18 @@ async def videoProcessing(identifier, imshow=False):
 
                         if person is None:
                             # Because it passed the sharpness test, this saved image will be perfectly clear!
-                            identifier.addNew(face_img_highres, face_encoding)
+                            
+                            # 1. Save the cropped face to the database and get the new user's ID
+                            new_uid = identifier.addNew(face_img_highres, face_encoding)
+                            
+                            # 2. Save the FULL uncropped security frame using that same ID
+                            cv2.imwrite(f'people/{new_uid}_full_frame.jpg', frame_bgr)
+                            
                             accessDenied(name="New User", reason="Not Enrolled")
                             cv2.putText(scaled_bgr, "NEW USER SAVED", (left, top - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 165, 255), 2)
                             
                             # Lock them out of this session so it doesn't span multiple files
-                            current_session_person = "DENIED_NEW_USER" 
+                            current_session_person = "DENIED_NEW_USER"
                         else:
                             current_session_person = person
                             
