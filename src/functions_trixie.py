@@ -104,22 +104,23 @@ async def videoProcessing(identifier, imshow=False):
             break
 
         try:
-            # capture_array() returns a numpy array in the configured format (RGB888)
-            frame = picam2.capture_array()
+            # capture_array() returns a numpy array in the configured format (BGR888)
+            frame_raw_rgb = picam2.capture_array()
         except Exception as e:
             print(f"Camera capture error: {e}")
             continue
 
-        # Picamera2 with RGB888 gives us RGB directly, but OpenCV uses BGR for display
-        # face_recognition needs RGB, so we keep the original for FR and convert for drawing
-        rgb_frame = frame  # Already RGB from picamera2
 
-        # Scale down for faster face detection processing
-        scaled_rgb = cv2.resize(rgb_frame, None, fx=0.5, fy=0.5)
+        # 1. THE FIX: Immediately translate the raw RGB frame into OpenCV's native BGR format
+        frame_bgr = cv2.cvtColor(frame_raw_rgb, cv2.COLOR_RGB2BGR)
 
-        # Convert to BGR for OpenCV drawing operations
-        scaled_bgr = cv2.cvtColor(scaled_rgb, cv2.COLOR_RGB2BGR)
+        # 2. Scale down the BGR frame for drawing and streaming
+        scaled_bgr = cv2.resize(frame_bgr, None, fx=0.5, fy=0.5)
 
+        # 3. Create a clean RGB copy just for the AI to use
+        scaled_rgb = cv2.cvtColor(scaled_bgr, cv2.COLOR_BGR2RGB)
+
+        # Pass the RGB copy to the AI to find the faces
         face_locations = fr.face_locations(scaled_rgb)
 
         if len(face_locations) > 0:
@@ -131,18 +132,17 @@ async def videoProcessing(identifier, imshow=False):
 
             # High-res crop for saving/blur checking
             orig_top = max(0, top * 2)
-            orig_bottom = min(frame.shape[0], bottom * 2)
+            orig_bottom = min(frame_bgr.shape[0], bottom * 2)
             orig_left = max(0, left * 2)
-            orig_right = min(frame.shape[1], right * 2)
-            frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-            face_img_highres = frame_bgr[orig_top:orig_bottom, orig_left:orig_right]
+            orig_right = min(frame_bgr.shape[1], right * 2)
+            face_img_highres_bgr = frame_bgr[orig_top:orig_bottom, orig_left:orig_right]
 
             # -------------------------------------------------------------------
             # STAGE 1: ENCODE ONCE & BLUR CHECK GATEKEEPER
             # -------------------------------------------------------------------
             if current_session_person is None:
                 # 1A. Check if the user is holding still
-                sharpness = check_sharpness(face_img_highres)
+                sharpness = check_sharpness(face_img_highres_bgr)
                 
                 if sharpness < BLUR_THRESHOLD:
                     cv2.putText(scaled_bgr, "MOTION BLUR: HOLD STILL", (left, top - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 2)
@@ -158,7 +158,7 @@ async def videoProcessing(identifier, imshow=False):
                             # Because it passed the sharpness test, this saved image will be perfectly clear!
                             
                             # 1. Save the cropped face to the database and get the new user's ID
-                            new_uid = identifier.addNew(face_img_highres, face_encoding)
+                            new_uid = identifier.addNew(face_img_highres_bgr, face_encoding)
                             
                             # 2. Save the FULL uncropped security frame using that same ID
                             cv2.imwrite(f'people/{new_uid}_full_frame.jpg', frame_bgr)
