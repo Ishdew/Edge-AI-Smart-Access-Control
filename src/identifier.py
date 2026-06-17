@@ -158,7 +158,7 @@ class Identifier:
 			return None
 		return 'people/{}.jpg'.format(uid)
 
-	def getIDFromEncoding(self, encoding, difference=0.6):
+	def getIDFromEncoding(self, encoding, difference=0.45):
 	
 		other_encodings = list(self.encodings.values())
 		distances = fr.face_distance(other_encodings, encoding)
@@ -173,14 +173,16 @@ class Identifier:
 
 		uid = list(self.encodings.keys())[most_similar] 
 
-		#output debug statement
-		print(uid, ' user, with accuracy {:.1%}'.format(1-distances[most_similar]))
+		# Calculate and output debug statement
+		match_accuracy = 1 - distances[most_similar]
+		print(uid, ' user, with accuracy {:.1%}'.format(match_accuracy))
 		
-		#change up this person's encoding a little bit, so we can trend towards true average
-
-		self.encodings[uid] = np.average(
-				[ encoding, self.encodings[uid] ],
-				axis=0, weights=[1, 2]) # give more weight to the known values
+		# Only update the stored face average if the match is highly confident (e.g., > 60% accuracy)
+		# This stops false accepts from corrupting your authorized user profiles.
+		if distances[most_similar] < 0.40:
+			self.encodings[uid] = np.average(
+					[ encoding, self.encodings[uid] ],
+					axis=0, weights=[1, 2]) # Give more weight to the known values
 
 		return uid
 
