@@ -49,7 +49,7 @@ class Identifier:
 			if uid not in self.encodings.keys():
 				print('err: no image for',uid)
 				continue
-			if bool(access):
+			if access.strip() == 'True':
 				self.allowed.append(uid)
 
 			if len(line) > 2:
