@@ -16,6 +16,7 @@ import gpiozero
 import logging
 
 # --- Picamera2 (libcamera) ---
+import identifier
 from picamera2 import Picamera2
 
 # --- Setup Audit Logging ---
@@ -95,9 +96,9 @@ def get_head_orientation(landmarks):
     dist_nose_to_chin = jaw_bottom[1] - nose_tip[1]
 
     # Evaluate ratios to determine orientation
-    if dist_nose_to_left_jaw > dist_nose_to_right_jaw * 1.8:
+    if dist_nose_to_left_jaw > dist_nose_to_right_jaw * 1.4:
         return "LOOKING_RIGHT"
-    elif dist_nose_to_right_jaw > dist_nose_to_left_jaw * 1.8:
+    elif dist_nose_to_right_jaw > dist_nose_to_left_jaw * 1.4:
         return "LOOKING_LEFT"
     elif dist_nose_to_chin > dist_nose_to_eyes * 1.5:
         return "LOOKING_UP"
@@ -191,7 +192,7 @@ async def videoProcessing(identifier, imshow=False):
                             new_uid = identifier.addNew(face_img_highres_bgr, face_encoding)
                             
                             # 2. Save the FULL uncropped security frame using that same ID
-                            cv2.imwrite(f'people/{new_uid}_full_frame.jpg', frame_bgr)
+                            cv2.imwrite(f'peoplefullframe/{new_uid}_full_frame.jpg', frame_bgr)
                             
                             accessDenied(name="New User", reason="Not Enrolled")
                             cv2.putText(scaled_bgr, "NEW USER SAVED", (left, top - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 165, 255), 2)
@@ -234,8 +235,8 @@ async def videoProcessing(identifier, imshow=False):
                         # --- HELPER FUNCTION FOR TOP-CENTERED TEXT ---
                         def draw_centered_instruction(text, color):
                             font = cv2.FONT_HERSHEY_SIMPLEX
-                            scale = 0.7
-                            thickness = 2
+                            scale = 0.5
+                            thickness = 1
                             # Get the width and height of the text box
                             text_size = cv2.getTextSize(text, font, scale, thickness)[0]
                             # Calculate the perfect X center: (Frame Width - Text Width) / 2
@@ -248,49 +249,54 @@ async def videoProcessing(identifier, imshow=False):
                             cv2.putText(scaled_bgr, text, (text_x, text_y), font, scale, color, thickness)
                         # ---------------------------------------------
 
-                        # 2. Guide the user through the training stages
-                        if identifier.enrollment_stage == "NEED_LEFT":
-                            draw_centered_instruction("TRAINING: TURN HEAD LEFT", (0, 165, 255))
-                            
-                            if current_pose == "LOOKING_LEFT":
-                                identifier.enrollment_stage = "NEED_RIGHT"
-                                cv2.putText(scaled_bgr, "GOOD!", (left, bottom + 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+                        # If a capture just happened, freeze the success message for 1.0 seconds
+                        if hasattr(identifier, 'success_timer') and time.time() < identifier.success_timer:
+                            draw_centered_instruction("CAPTURED! GOOD.", (0, 255, 0))
+                        else:
+                            if identifier.enrollment_stage == "NEED_LEFT":
+                                draw_centered_instruction("TRAINING: SLIGHTLY TURN LEFT", (0, 165, 255))
                                 
-                        elif identifier.enrollment_stage == "NEED_RIGHT":
-                            draw_centered_instruction("TRAINING: TURN HEAD RIGHT", (0, 165, 255))
-                            
-                            if current_pose == "LOOKING_RIGHT":
-                                identifier.enrollment_stage = "NEED_BLINK"
-                                cv2.putText(scaled_bgr, "GOOD!", (left, bottom + 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+                                if current_pose == "LOOKING_LEFT":
+                                    print(f"[DEBUG] Captured Orientation: {current_pose}")
+                                    identifier.enrollment_stage = "NEED_RIGHT"
+                                    identifier.success_timer = time.time() + 1.5 # Trigger 1.5 second pause
+                                    
+                            elif identifier.enrollment_stage == "NEED_RIGHT":
+                                draw_centered_instruction("TRAINING: SLIGHTLY TURN RIGHT", (0, 165, 255))
                                 
-                        elif identifier.enrollment_stage == "NEED_BLINK":
-                            draw_centered_instruction("TRAINING COMPLETE: PLEASE BLINK", (0, 0, 255))
-                            
-                            left_eye = landmarks.get('left_eye')
-                            right_eye = landmarks.get('right_eye')
-                            if left_eye and right_eye:
-                                leftEAR = calculate_ear(left_eye)
-                                rightEAR = calculate_ear(right_eye)
-                                ear = (leftEAR + rightEAR) / 2.0
+                                if current_pose == "LOOKING_RIGHT":
+                                    print(f"[DEBUG] Captured Orientation: {current_pose}")
+                                    identifier.enrollment_stage = "NEED_BLINK"
+                                    identifier.success_timer = time.time() + 1.5 
+                                    
+                            elif identifier.enrollment_stage == "NEED_BLINK":
+                                draw_centered_instruction("TRAINING COMPLETE: PLEASE BLINK", (0, 0, 255))
+                                
+                                left_eye = landmarks.get('left_eye')
+                                right_eye = landmarks.get('right_eye')
+                                if left_eye and right_eye:
+                                    leftEAR = calculate_ear(left_eye)
+                                    rightEAR = calculate_ear(right_eye)
+                                    ear = (leftEAR + rightEAR) / 2.0
 
-                                if ear < EYE_AR_THRESH:
-                                    blink_counter += 1
-                                else:
-                                    if blink_counter >= EYE_AR_CONSEC_FRAMES:
-                                        person_name = identifier.friendly_names.get(current_session_person, current_session_person)
-                                        accessGranted(name=person_name)
-                                        
-                                        # Center the unlock success message as well
-                                        draw_centered_instruction(f"UNLOCKED: WELCOME {person_name.upper()}", (0, 255, 0))
-                                        
-                                        ret_enc, v = cv2.imencode('.jpg', scaled_bgr)
-                                        identifier.setView(v.tobytes())
-                                        
-                                        await asyncio.sleep(3) 
-                                        current_session_person = None 
-                                        identifier.enrollment_stage = "NEED_LEFT" 
-                                        
-                                    blink_counter = 0
+                                    if ear < EYE_AR_THRESH:
+                                        blink_counter += 1
+                                    else:
+                                        if blink_counter >= EYE_AR_CONSEC_FRAMES:
+                                            print("[DEBUG] Captured Action: BLINK_CONFIRMED. Door Unlocked.")
+                                            person_name = identifier.friendly_names.get(current_session_person, current_session_person)
+                                            accessGranted(name=person_name)
+                                            
+                                            draw_centered_instruction(f"UNLOCKED: WELCOME {person_name.upper()}", (0, 255, 0))
+                                            
+                                            ret_enc, v = cv2.imencode('.jpg', scaled_bgr)
+                                            identifier.setView(v.tobytes())
+                                            
+                                            await asyncio.sleep(3) 
+                                            current_session_person = None 
+                                            identifier.enrollment_stage = "NEED_LEFT" 
+                                            
+                                        blink_counter = 0
 
                 else:
                     cv2.putText(scaled_bgr, "ACCESS DENIED", (left, top - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
