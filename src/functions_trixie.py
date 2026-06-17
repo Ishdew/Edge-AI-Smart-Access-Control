@@ -143,7 +143,7 @@ async def videoProcessing(identifier, imshow=False):
 
 
         # 1. THE FIX: Immediately translate the raw RGB frame into OpenCV's native BGR format
-        frame_bgr = cv2.cvtColor(frame_raw_rgb, cv2.COLOR_RGB2BGR)
+        frame_bgr = frame_raw_rgb
 
         # 2. Scale down the BGR frame for drawing and streaming
         scaled_bgr = cv2.resize(frame_bgr, None, fx=0.5, fy=0.5)
@@ -244,7 +244,7 @@ async def videoProcessing(identifier, imshow=False):
                             text_y = 30 # 30 pixels down from the very top of the frame
                             
                             # Draw a subtle black outline for better readability against bright backgrounds
-                            cv2.putText(scaled_bgr, text, (text_x, text_y), font, scale, (0, 0, 0), thickness + 2)
+                            cv2.putText(scaled_bgr, text, (text_x, text_y), font, scale, (0, 0, 0), thickness)
                             # Draw the main colored text
                             cv2.putText(scaled_bgr, text, (text_x, text_y), font, scale, color, thickness)
                         # ---------------------------------------------
