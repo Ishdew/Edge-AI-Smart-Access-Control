@@ -12,6 +12,9 @@ class Identifier:
 		self.exit = False
 		self.friendly_names = {}
 		self.allowed = []
+		self.trained = [] # Tracks if the user has completed multi-shot training
+
+
 		print('loading known people')
 		#load known people
 		p = Path('people')
@@ -20,6 +23,10 @@ class Identifier:
 			exit()
 
 		for fn in p.glob('*.jpg'):
+			# Skip full frames so they don't corrupt the encodings
+			if 'full_frame' in fn.name:
+				continue
+
 			name = fn.stem #filename without extensio
 			img = cv2.imread(str(fn))
 			print('>>',name)
@@ -43,17 +50,28 @@ class Identifier:
 			if line == '':
 				continue
 
-			line = [x.strip() for x in line.split(',')]
-			uid, access = line[0], line[1]
-
+			parts = [x.strip() for x in line.split(',')]
+			uid = parts[0]
+			access = parts[1] == 'True'
+			
+			trained = False
+			name = uid
+			
+			# Parse the new 4-column format while supporting the old 3-column format
+			if len(parts) >= 3:
+				if parts[2] in ['True', 'False']:
+					trained = parts[2] == 'True'
+					if len(parts) >= 4:
+						name = ' '.join(parts[3:])
+				else:
+					name = ' '.join(parts[2:])
+					
 			if uid not in self.encodings.keys():
-				print('err: no image for',uid)
 				continue
-			if access.strip() == 'True':
-				self.allowed.append(uid)
-
-			if len(line) > 2:
-				self.friendly_names[uid] = ' '.join(line[2:])
+				
+			if access: self.allowed.append(uid)
+			if trained: self.trained.append(uid)
+			self.friendly_names[uid] = name
 
 		print('loaded data')
 
@@ -95,11 +113,10 @@ class Identifier:
 		with p.open('w') as f:
 			for user in self.encodings.keys():
 				allowed = user in self.allowed
-				try:
-					name = self.friendly_names[user]
-				except KeyError:
-					name = ''
-				f.write('{},{},{}\n'.format(user,allowed,name))
+				trained = user in self.trained
+				name = self.friendly_names.get(user, user)
+				# Write the new format: uid, allowed, trained, name
+				f.write(f'{user},{allowed},{trained},{name}\n')
 
 
 	def addNew(self, thumbnail, encoding):
@@ -131,17 +148,13 @@ class Identifier:
 	def getNames(self):
 		ret = []
 		for uid in self.encodings.keys():
-			if uid in self.friendly_names.keys():
-				friendly = self.friendly_names[uid]
-			else:
-				friendly = None
+			display_name = self.friendly_names.get(uid, uid)
 			ret.append({
 				'uid' : uid,
-				'friendly' : friendly,
-				'name' : friendly or uid, 
-				'allowed' : True if uid in self.allowed else False
+				'name' : display_name, 
+				'allowed' : uid in self.allowed,
+				'trained' : uid in self.trained # Send training status to dashboard
 			})
-		print(ret)
 		return ret
 
 	def delete(self,uid):
@@ -152,13 +165,15 @@ class Identifier:
 		p = Path('people/{}.jpg'.format(uid))
 		if p.exists() and p.is_file():
 			p.unlink()
+		p_full = Path('peoplefullframe/{}_full_frame.jpg'.format(uid))
+		if p_full.exists() and p_full.is_file(): p_full.unlink()
 	
 	def getImageLocation(self, uid):
 		if not uid in self.encodings.keys():
 			return None
 		return 'people/{}.jpg'.format(uid)
 
-	def getIDFromEncoding(self, encoding, difference=0.45):
+	def getIDFromEncoding(self, encoding, difference=0.40):
 	
 		other_encodings = list(self.encodings.values())
 		distances = fr.face_distance(other_encodings, encoding)
@@ -177,12 +192,10 @@ class Identifier:
 		match_accuracy = 1 - distances[most_similar]
 		print(uid, ' user, with accuracy {:.1%}'.format(match_accuracy))
 		
-		# Only update the stored face average if the match is highly confident (e.g., > 60% accuracy)
-		# This stops false accepts from corrupting your authorized user profiles.
-		if distances[most_similar] < 0.40:
+		# Only average the face if the user is ALREADY fully trained. 
+		# This prevents bad angles from breaking the training process itself.
+		if distances[most_similar] < 0.40 and uid in self.trained:
 			self.encodings[uid] = np.average(
 					[ encoding, self.encodings[uid] ],
-					axis=0, weights=[1, 2]) # Give more weight to the known values
-
+					axis=0, weights=[1, 2]) 
 		return uid
-
