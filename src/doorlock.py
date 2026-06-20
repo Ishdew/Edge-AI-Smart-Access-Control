@@ -21,10 +21,12 @@ from io import BytesIO
 import asyncio
 from sanic import Sanic
 import sanic.response as sanic_response
-from functions import *
+from functions_trixie import *
 from identifier import Identifier
 
-loop = asyncio.get_event_loop()
+# Fix for Sanic v25 + Python 3.13: use "fork" to avoid re-importing
+# the module in child processes (which causes GPIO/camera double-init)
+Sanic.start_method = "fork"
 
 app = Sanic(__name__)
 
